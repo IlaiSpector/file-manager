@@ -1,0 +1,28 @@
+# Python cache / compiled files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environment
+.venv/
+venv/
+env/
+
+# Packaging / build
+build/
+dist/
+*.egg-info/
+
+# VS Code
+.vscode/
+
+# Local database and storage
+data/app.db
+storage/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
