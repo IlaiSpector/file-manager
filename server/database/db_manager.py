@@ -1,4 +1,8 @@
-"""Database manager for the server-side SQLite database."""
+"""Database manager for the server-side SQLite database.
+
+This helper owns the SQLAlchemy engine and session lifecycle so authentication and other services
+can access the database.
+"""
 
 from contextlib import contextmanager
 from pathlib import Path
@@ -32,6 +36,7 @@ class DatabaseManager:
 
     @staticmethod
     def _build_sqlite_url(database_path: Path) -> str:
+        """Convert a filesystem path into a SQLAlchemy SQLite URL."""
         return f"sqlite:///{database_path.as_posix()}"
 
     def initialize_database(self) -> None:
@@ -41,7 +46,12 @@ class DatabaseManager:
 
     @contextmanager
     def session_scope(self) -> Iterator[Session]:
-        """Open one session, then commit or roll back automatically."""
+        """Yield one session and handle commit/rollback automatically.
+
+        This keeps transaction boundaries explicit: successful operations are
+        committed, and any exception triggers a rollback before the error is
+        re-raised to the caller.
+        """
         session = self._session_factory()
         try:
             yield session

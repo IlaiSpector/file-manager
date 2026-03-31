@@ -1,4 +1,12 @@
-"""shared helpers for protocol framing and socket I/O."""
+"""Shared helpers for protocol framing and socket I/O.
+
+This module implements the low-level transport rules described in the project
+summary:
+- JSON control messages are length-prefixed.
+- File contents are transferred as raw bytes.
+- The protocol layer is shared so both client and server follow identical
+  framing rules.
+"""
 
 import json
 import socket
@@ -14,12 +22,14 @@ from shared.config import (
 
 
 def _validate_message_dict(message: dict[str, Any]) -> dict[str, Any]:
+    """Ensure a message is a dictionary to make sure it can be transformed into a JSON-object before encoding."""
     if not isinstance(message, dict):
         raise TypeError("message must be a dictionary.")
     return message
 
 
 def _validate_bytes(data: bytes) -> bytes:
+    """Ensure a socket payload is raw bytes."""
     if isinstance(data, bytes):
         return data
 
@@ -27,7 +37,7 @@ def _validate_bytes(data: bytes) -> bytes:
 
 
 def encode_message(message: dict[str, Any]) -> bytes:
-    """Encode a protocol message into a prefixed JSON byte sequence."""
+    """Encode a message into ``length-prefix + JSON payload`` both as bytes."""
     json_bytes = json.dumps(
         _validate_message_dict(message),
         ensure_ascii=False,
@@ -41,7 +51,12 @@ def encode_message(message: dict[str, Any]) -> bytes:
 
 
 def decode_message(prefixed_bytes: bytes) -> dict[str, Any]:
-    """Decode a full prefixed JSON byte sequence back into a dictionary."""
+    """Decode a full prefixed JSON byte sequence back into a dictionary.
+
+    The caller must provide one complete framed message, length prefix included
+    
+    ValueErrors needs to catched to prevent them crashing server
+    """
     message_bytes = _validate_bytes(prefixed_bytes)
     if len(message_bytes) < LENGTH_PREFIX_SIZE:
         raise ValueError("Prefixed message is shorter than the length prefix.")
@@ -62,12 +77,12 @@ def decode_message(prefixed_bytes: bytes) -> dict[str, Any]:
 
 
 def send_all(sock: socket.socket, data: bytes) -> None:
-    """Send a complete byte sequence through a socket."""
+    """Send all bytes through a socket."""
     sock.sendall(_validate_bytes(data))
 
 
 def recv_exact(sock: socket.socket, size: int) -> bytes:
-    """Receive an exact number of bytes from a socket."""
+    """Receive exactly ``size`` bytes or raise if the socket closes early."""
     if not isinstance(size, int):
         raise TypeError("size must be an integer.")
     if size < 0:
@@ -78,7 +93,8 @@ def recv_exact(sock: socket.socket, size: int) -> bytes:
     chunks: list[bytes] = []
     bytes_remaining = size
 
-    # Raw file transfers may be large, so receive them in bounded chunks.
+    # Raw file transfers may be large, so receive them in bounded chunks
+    # rather than attempting a single read.
     while bytes_remaining > 0:
         chunk = sock.recv(min(SOCKET_CHUNK_SIZE, bytes_remaining))
         if not chunk:
@@ -92,7 +108,7 @@ def recv_exact(sock: socket.socket, size: int) -> bytes:
 
 
 def recv_message_bytes(sock: socket.socket) -> bytes:
-    """Receive one full prefixed JSON message from a socket."""
+    """Receive one complete length-prefixed JSON message from a socket."""
     length_prefix = recv_exact(sock, LENGTH_PREFIX_SIZE)
     payload_length = int.from_bytes(length_prefix, LENGTH_PREFIX_BYTEORDER)
     payload_bytes = recv_exact(sock, payload_length)

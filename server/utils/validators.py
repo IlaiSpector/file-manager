@@ -1,4 +1,8 @@
-"""Reusable validation helpers for server-side inputs."""
+"""Reusable validation helpers for server-side inputs.
+
+These functions cover the basic input checks already needed by the current
+authentication flow. filename and path-safety validation would be implemented here.
+"""
 
 
 def require_non_empty_text(value: str, field_name: str) -> str:

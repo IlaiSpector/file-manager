@@ -14,7 +14,7 @@ from server.utils.validators import is_valid_email, require_non_empty_text
 
 
 class AuthResult:
-    """Socket-friendly result for signup/login attempts."""
+    """result for signup/login attempts.    """
 
     def __init__(self, success: bool, message: str, user: User | None) -> None:
         self.success = success
@@ -30,6 +30,7 @@ class AuthResult:
         )
 
     def __eq__(self, other: object) -> bool:
+        """Support direct equality checks"""
         if not isinstance(other, AuthResult):
             return NotImplemented
         return (
@@ -51,7 +52,10 @@ class AuthService:
         self.user_storage_service = user_storage_service
 
     def try_signup(self, username: str, email: str, password: str) -> AuthResult:
-        """Create a new user account when the provided data is valid."""
+        """Create a new user account when the provided data is valid.
+
+        Expected validation failures are returned as ``AuthResult`` instances.
+        """
         try:
             normalized_username = require_non_empty_text(username, "username")
             normalized_email = self._normalize_email(email)
@@ -78,10 +82,12 @@ class AuthService:
                     return AuthResult(False, "Email or username already exists", None)
 
                 session.add(user)
+                # after ``flush``, the changes are still revertable in case of a problem with the creation of the user
                 session.flush()
                 self.user_storage_service.create_user_storage_folder(user.id)
                 return AuthResult(True, "User created successfully", user)
         except IntegrityError:
+            # if there is a problem with the creation in the database, the user can't be created. 
             return AuthResult(False, "Email or username already exists", None)
 
     def try_login(self, email: str, password: str) -> AuthResult:
@@ -103,13 +109,20 @@ class AuthService:
             return AuthResult(True, "Login successful", user)
 
     def _generate_user_id(self) -> str:
+        """Create the UUID string used as user id"""
         return str(uuid.uuid4())
 
     def _normalize_email(self, email: str) -> str:
+        """Normalize email input for uniqueness checks and login lookup."""
         normalized_email = require_non_empty_text(email, "email").lower()
         return normalized_email
 
     def _require_password(self, password: str) -> str:
+        """Require a non-empty password string.
+
+        The password is not stripped because spaces may be part
+        of the user's intended password
+        """
         if not isinstance(password, str):
             raise TypeError("password must be a string.")
         if not password.strip():
@@ -117,19 +130,24 @@ class AuthService:
         return password
 
     def _hash_password(self, password: str) -> str:
+        """Return a bcrypt hash string for database storage."""
         password_bytes = password.encode("utf-8")
         return bcrypt.hashpw(password_bytes, bcrypt.gensalt()).decode("utf-8")
 
     def _verify_password(self, password: str, stored_hash: str) -> bool:
+        """Check a password against the stored bcrypt hash."""
         return bcrypt.checkpw(password.encode("utf-8"), stored_hash.encode("utf-8"))
 
     def _get_user_by_email(self, session: Session, email: str) -> User | None:
+        """Look up a user by email address."""
         statement = select(User).where(User.email == email)
         return session.scalar(statement)
 
     def _email_exists(self, session: Session, email: str) -> bool:
+        """Return whether a user with a specific email is already registeed."""
         return self._get_user_by_email(session, email) is not None
 
     def _username_exists(self, session: Session, username: str) -> bool:
+        """Return whether a username is already registered."""
         statement = select(User).where(User.username == username)
         return session.scalar(statement) is not None

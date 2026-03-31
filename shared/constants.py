@@ -1,15 +1,23 @@
-"""Shared protocol constants."""
+"""Shared protocol constants
 
+The project uses a small custom JSON protocol over TCP. Keeping repeated field
+names, action names, and status values here makes the future client and server
+implementations less error-prone.
+"""
+
+# Top-level message fields used by every JSON request/response pair.
 FIELD_ACTION = "action"
 FIELD_REQUEST_ID = "request_id"
 FIELD_DATA = "data"
 FIELD_STATUS = "status"
 FIELD_MESSAGE = "message"
 
+# response statuses
 STATUS_SUCCESS = "success"
 STATUS_ERROR = "error"
 STATUS_READY = "ready"
 
+# action names
 ACTION_SIGNUP = "SIGNUP"
 ACTION_LOGIN = "LOGIN"
 ACTION_LIST_FILES = "LIST_FILES"
