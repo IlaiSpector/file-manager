@@ -1,5 +1,6 @@
 """Authentication service backed by the server database."""
 
+from pathlib import Path
 import uuid
 
 import bcrypt
@@ -9,7 +10,7 @@ from sqlalchemy.orm import Session
 
 from server.database.db_manager import DatabaseManager
 from server.database.models import User
-from server.services.user_storage_service import UserStorageService
+from server.utils.path_utils import get_user_storage_path
 from server.utils.validators import is_valid_email, require_non_empty_text
 
 
@@ -46,10 +47,10 @@ class AuthService:
     def __init__(
         self,
         db_manager: DatabaseManager,
-        user_storage_service: UserStorageService,
+        storage_root: Path,
     ) -> None:
         self.db_manager = db_manager
-        self.user_storage_service = user_storage_service
+        self.storage_root = storage_root
 
     def try_signup(self, username: str, email: str, password: str) -> AuthResult:
         """Create a new user account when the provided data is valid.
@@ -84,7 +85,7 @@ class AuthService:
                 session.add(user)
                 # after ``flush``, the changes are still revertable in case of a problem with the creation of the user
                 session.flush()
-                self.user_storage_service.create_user_storage_folder(user.id)
+                self._create_user_storage_folder(user.id)
                 return AuthResult(True, "User created successfully", user)
         except IntegrityError:
             # if there is a problem with the creation in the database, the user can't be created. 
@@ -151,3 +152,14 @@ class AuthService:
         """Return whether a username is already registered."""
         statement = select(User).where(User.username == username)
         return session.scalar(statement) is not None
+
+    def _create_user_storage_folder(self, user_id: str) -> None:
+        """Create the per-user storage folder under the configured storage root.
+        ''parents=True'' create parents folders if missing 
+        """
+
+        # exists_ok=True means if the folder exists, don't raise an error and leave it as it is.
+        self.storage_root.mkdir(parents=True, exist_ok=True)
+        user_storage_path = get_user_storage_path(self.storage_root, user_id)
+        # exists_ok=False means if the folder exists, raise an error. useful to show bugs in folder creation
+        user_storage_path.mkdir(parents=True, exist_ok=False)
