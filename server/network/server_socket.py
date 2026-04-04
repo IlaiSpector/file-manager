@@ -1,0 +1,83 @@
+"""Listening socket setup and client-thread creation for the server."""
+
+from __future__ import annotations
+
+import socket
+import threading
+
+from server.config import SERVER_BACKLOG, SERVER_HOST, SERVER_PORT
+from server.network.client_handler import ClientHandler
+from server.services.auth_service import AuthService
+from server.services.file_service import FileService
+
+
+class ServerSocket:
+    """Accept incoming clients and hand each one to its own handler thread."""
+
+    def __init__(
+        self,
+        auth_service: AuthService,
+        file_service: FileService,
+        host: str = SERVER_HOST,
+        port: int = SERVER_PORT,
+        backlog: int = SERVER_BACKLOG,
+    ) -> None:
+        self.auth_service = auth_service
+        self.file_service = file_service
+        self.host = host
+        self.port = port
+        # amount of clients that can wait in queue before accepting.
+        self.backlog = backlog
+        self.listening_socket: socket.socket | None = None
+
+    def serve_forever(self) -> None:
+        """Create the listening socket and accept clients forever."""
+        self.listening_socket = self._create_listening_socket()
+        self.port = self.listening_socket.getsockname()[1]
+
+        while True:
+            try:
+                client_socket, client_address = self.listening_socket.accept()
+            except OSError:
+                # checks if the listening socket has been closed. if it, exits cleanly. if it not raises the error.
+                if self.listening_socket.fileno() == -1:
+                    break
+                raise
+
+            self._start_client_thread(client_socket, client_address)
+
+    def _create_listening_socket(self) -> socket.socket:
+        """Create, bind, and listen on the server socket."""
+        listening_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        listening_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        listening_socket.bind((self.host, self.port))
+        listening_socket.listen(self.backlog)
+        return listening_socket
+
+    def _start_client_thread(
+        self,
+        client_socket: socket.socket,
+        client_address: tuple[str, int],
+    ) -> None:
+        """Start a thread to handle the accepted client."""
+        client_thread = threading.Thread(
+            target=self._run_client_handler,
+            args=(client_socket, client_address),
+            daemon=True, # means these threads run on the backround. if the non-daemon threads (the main thread in this case) will exit,
+                         # the program can exit without waiting for these threads to exit 
+        )
+        client_thread.start()
+
+    def _run_client_handler(
+        self,
+        client_socket: socket.socket,
+        client_address: tuple[str, int],
+    ) -> None:
+        """Instantiate and run one client handler."""
+        handler = ClientHandler(
+            client_socket=client_socket,
+            auth_service=self.auth_service,
+            file_service=self.file_service,
+            client_address=client_address,
+        )
+        handler.handle_client()

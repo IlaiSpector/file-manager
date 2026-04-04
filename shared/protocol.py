@@ -114,3 +114,31 @@ def recv_message_bytes(sock: socket.socket) -> bytes:
     payload_bytes = recv_exact(sock, payload_length)
     return length_prefix + payload_bytes
 
+
+def recv_message_bytes_or_none(sock: socket.socket) -> bytes | None:
+    """Receive one complete JSON message or ``None`` on a clean EOF.
+
+    ``None`` is returned only when the peer closes the socket before sending the
+    next message length prefix at all. Partial prefixes or payloads still raise
+    ``ConnectionError`` because they indicate a broken transfer.
+    """
+    #TODO, change the way rec_message_bytes_or_none behave. currently it depends on recv_exact, which can raise an error, and currently it still raises ConnectionError if client drops mid transfer. 
+    # there should be a recv_exactly_or_none function which behaves like recv_exactly but doesn't throw, returns None if client disconnect. 
+    # this function should do first, length_prefix = recv_exactly_or_none(LENGTH_PREFIX_SIZE). than cbeck if its None, if it is return None, otherwise return recv_exactly_or_none(Lengh)
+    #  (which will be available after decoding of length_prefix). if gets None back, return None, otherwise, return the result bytes
+    prefix_chunks: list[bytes] = []
+    bytes_remaining = LENGTH_PREFIX_SIZE
+
+    while bytes_remaining > 0:
+        chunk = sock.recv(min(SOCKET_CHUNK_SIZE, bytes_remaining))
+        if not chunk:
+            if not prefix_chunks:
+                return None
+            raise ConnectionError("Socket closed while receiving the message length prefix.")
+        prefix_chunks.append(chunk)
+        bytes_remaining -= len(chunk)
+
+    length_prefix = b"".join(prefix_chunks)
+    payload_length = int.from_bytes(length_prefix, LENGTH_PREFIX_BYTEORDER)
+    payload_bytes = recv_exact(sock, payload_length)
+    return length_prefix + payload_bytes
