@@ -65,7 +65,13 @@ class ClientHandler:
         }
 
     def handle_client(self) -> None:
-        """Process requests until the peer disconnects or a network error occurs."""
+        """Process requests for this client connection until it ends.
+
+        A clean disconnect before the next message starts ends the loop
+        quietly. Malformed or truncated transfers eventually surface as
+        :class:`ConnectionError`, which stops only this handler and still
+        triggers socket cleanup in ``finally``.
+        """
 
         try:
             while True:
@@ -85,7 +91,11 @@ class ClientHandler:
             self.close()
 
     def close(self) -> None:
-        """Close the client socket without raising additional shutdown noise."""
+        """Close the client socket without raising shutdown noise.
+
+        The method tries to shut down both read and write directions first, but
+        ignores shutdown errors so calling close() during cleanup won’t fail if the socket was already closed
+        """
         try:
             #shuts down communication, both reading and writing with the socket. SHUT_RDWR: RD means reading, WR meaning writing
             self.client_socket.shutdown(socket.SHUT_RDWR)
@@ -96,7 +106,12 @@ class ClientHandler:
             self.client_socket.close()
 
     def _dispatch_message(self, message: dict) -> None:
-        """Validate one request envelope and route it to the matching handler."""
+        """Validate a decoded request and route it to the matching handler.
+
+        :param message: Decoded request dictionary received from the client.
+        :raises ConnectionError: If the request cannot be safely answered
+            because it lacks a usable identity.
+        """
         action, request_id = self._extract_request_identity(message)
         is_valid, error_message = self._validate_request_envelope(message)
         if not is_valid:
@@ -125,7 +140,12 @@ class ClientHandler:
         handler(request_id, data)
 
     def _extract_request_identity(self, message: dict) -> tuple[str | None, str | None]:
-        """Return the action and request id when both are usable for an error reply."""
+        """Extract the request identity used for error responses.
+
+        :param message: Decoded request dictionary.
+        :returns: Two-item tuple ``(action, request_id)`` when both values are
+            usable non-empty strings; otherwise ``(None, None)``.
+        """
         action = message.get(FIELD_ACTION)
         request_id = message.get(FIELD_REQUEST_ID)
 
@@ -136,7 +156,12 @@ class ClientHandler:
         return action, request_id
 
     def _validate_request_envelope(self, message: dict) -> tuple[bool, str]:
-        """Validate the common request fields shared by all actions."""
+        """Validate the request fields shared by every protocol action.
+
+        :param message: Decoded request dictionary.
+        :returns: Two-item tuple ``(is_valid, message)`` describing whether the
+            request can be routed safely.
+        """
         if FIELD_ACTION not in message:
             return False, "Request is missing the action field."
         if FIELD_REQUEST_ID not in message:
@@ -152,7 +177,12 @@ class ClientHandler:
         return True, ""
 
     def _validate_action_allowed(self, action: str) -> tuple[bool, str]:
-        """Enforce the connection-based authentication rules."""
+        """Enforce the connection-based authentication rules.
+
+        :param action: Action that the client requested.
+        :returns: Two-item tuple ``(is_allowed, message)`` describing whether
+            the current connection state may perform that action.
+        """
         if self.current_user is None and action not in {ACTION_SIGNUP, ACTION_LOGIN}:
             return False, "User is not authenticated"
         if self.current_user is not None and action in {ACTION_SIGNUP, ACTION_LOGIN}:
@@ -160,7 +190,14 @@ class ClientHandler:
         return True, ""
 
     def handle_signup(self, request_id: str, data: dict) -> None:
-        """Create a new account and authenticate the current connection."""
+        """Handle a ``SIGNUP`` request for the current connection.
+
+        On success the connection immediately becomes authenticated as the new
+        user.
+
+        :param request_id: Request identifier echoed back to the client.
+        :param data: Signup payload already validated as a dictionary.
+        """
         is_valid, error_message = self._validate_signup(data)
         if not is_valid:
             self._send_json_message(build_error_response(ACTION_SIGNUP, request_id, error_message))
@@ -181,11 +218,22 @@ class ClientHandler:
         self._send_json_message(build_error_response(ACTION_SIGNUP, request_id, result.message))
 
     def _validate_signup(self, data: dict) -> tuple[bool, str]:
-        """Validate that signup contains the expected fields."""
+        """Validate the action-specific fields for ``SIGNUP``.
+
+        :param data: Signup payload dictionary.
+        :returns: Two-item tuple ``(is_valid, message)`` describing whether the
+            required signup fields are present.
+        """
         return self._require_fields(data, "username", "email", "password")
 
     def handle_login(self, request_id: str, data: dict) -> None:
-        """Authenticate the current connection by email and password."""
+        """Handle a ``LOGIN`` request for the current connection.
+
+        On success the connection becomes authenticated as the matching user.
+
+        :param request_id: Request identifier echoed back to the client.
+        :param data: Login payload already validated as a dictionary.
+        """
         is_valid, error_message = self._validate_login(data)
         if not is_valid:
             self._send_json_message(build_error_response(ACTION_LOGIN, request_id, error_message))
@@ -205,11 +253,22 @@ class ClientHandler:
         self._send_json_message(build_error_response(ACTION_LOGIN, request_id, result.message))
 
     def _validate_login(self, data: dict) -> tuple[bool, str]:
-        """Validate that login contains the expected fields."""
+        """Validate the action-specific fields for ``LOGIN``.
+
+        :param data: Login payload dictionary.
+        :returns: Two-item tuple ``(is_valid, message)`` describing whether the
+            required login fields are present.
+        """
         return self._require_fields(data, "email", "password")
 
     def handle_list_files(self, request_id: str, data: dict) -> None:
-        """Return the list of files for the authenticated user."""
+        """Handle a ``LIST_FILES`` request for the authenticated user.
+
+        :param request_id: Request identifier echoed back to the client.
+        :param data: Action payload dictionary. The envelope has already
+            validated that it is a dictionary, and this action has no
+            additional fields.
+        """
 
         assert self.current_user is not None
         is_successful, message, files = self.file_service.list_files(self.current_user.id)
@@ -228,7 +287,17 @@ class ClientHandler:
 
 
     def handle_upload_file(self, request_id: str, data: dict) -> None:
-        """Perform the ready/bytes/complete upload flow."""
+        """Handle the staged ``UPLOAD_FILE`` protocol flow.
+
+        The method validates the upload metadata, asks the file service for the
+        final filename, sends the ``ready`` response, receives exactly the
+        announced number of raw bytes, and then persists the upload.
+
+        :param request_id: Request identifier echoed back to the client.
+        :param data: Upload payload already validated as a dictionary.
+        :raises ConnectionError: If the client disconnects during the raw-byte
+            receive or while a response is being sent.
+        """
         is_valid, error_message = self._validate_upload_file(data)
         if not is_valid:
             self._send_json_message(build_error_response(ACTION_UPLOAD_FILE, request_id, error_message))
@@ -276,7 +345,12 @@ class ClientHandler:
         )
 
     def _validate_upload_file(self, data: dict) -> tuple[bool, str]:
-        """Validate upload metadata before the raw bytes are received."""
+        """Validate the action-specific fields for ``UPLOAD_FILE``.
+
+        :param data: Upload payload dictionary.
+        :returns: Two-item tuple ``(is_valid, message)`` describing whether the
+            upload metadata is acceptable before raw bytes are received.
+        """
         is_valid, error_message = self._require_fields(data, "filename", "filesize")
         if not is_valid:
             return False, error_message
@@ -296,7 +370,17 @@ class ClientHandler:
         return True, ""
 
     def handle_download_file(self, request_id: str, data: dict) -> None:
-        """Perform the ready/bytes download flow."""
+        """Handle the staged ``DOWNLOAD_FILE`` protocol flow.
+
+        The method validates the request, loads the file bytes from the file
+        service, sends the ``ready`` response with the final size, and then
+        streams the raw payload.
+
+        :param request_id: Request identifier echoed back to the client.
+        :param data: Download payload already validated as a dictionary.
+        :raises ConnectionError: If the client disconnects while the response
+            or raw bytes are being sent.
+        """
         is_valid, error_message = self._validate_download_file(data)
         if not is_valid:
             self._send_json_message(
@@ -325,11 +409,20 @@ class ClientHandler:
         self._send_raw_bytes(file_bytes)
 
     def _validate_download_file(self, data: dict) -> tuple[bool, str]:
-        """Validate a download request."""
+        """Validate the action-specific fields for ``DOWNLOAD_FILE``.
+
+        :param data: Download payload dictionary.
+        :returns: Two-item tuple ``(is_valid, message)`` describing whether the
+            required filename field is present.
+        """
         return self._require_fields(data, "filename")
 
     def handle_delete_file(self, request_id: str, data: dict) -> None:
-        """Delete one stored file owned by the current user."""
+        """Handle a ``DELETE_FILE`` request for the authenticated user.
+
+        :param request_id: Request identifier echoed back to the client.
+        :param data: Delete payload already validated as a dictionary.
+        """
         is_valid, error_message = self._validate_delete_file(data)
         if not is_valid:
             self._send_json_message(build_error_response(ACTION_DELETE_FILE, request_id, error_message))
@@ -349,32 +442,63 @@ class ClientHandler:
         self._send_json_message(build_error_response(ACTION_DELETE_FILE, request_id, message))
 
     def _validate_delete_file(self, data: dict) -> tuple[bool, str]:
-        """Validate a delete request."""
+        """Validate the action-specific fields for ``DELETE_FILE``.
+
+        :param data: Delete payload dictionary.
+        :returns: Two-item tuple ``(is_valid, message)`` describing whether the
+            required filename field is present.
+        """
         return self._require_fields(data, "filename")
 
     def handle_logout(self, request_id: str, data: dict) -> None:
-        """Clear the authenticated user while keeping the socket open."""
+        """Handle a ``LOGOUT`` request for the current connection.
+
+        The socket remains open, but the connection returns to the unauthenticated
+        state.
+
+        :param request_id: Request identifier echoed back to the client.
+        :param data: Action payload dictionary. This action has no additional
+            fields beyond the validated envelope.
+        """
         self.current_user = None
         self._send_json_message(
             build_success_response(ACTION_LOGOUT, request_id, "Logged out successfully"),
         )
 
     def _require_fields(self, data: dict, *field_names: str) -> tuple[bool, str]:
-        """Ensure the action payload contains all required keys."""
+        """Ensure an already-validated payload contains required keys.
+
+        The caller is expected to pass a payload that has already been checked
+        as a dictionary by the request envelope validation step.
+
+        :param data: Action payload dictionary.
+        :param field_names: Required keys that must exist in ``data``.
+        :returns: Two-item tuple ``(is_valid, message)`` describing whether all
+            required fields are present.
+        """
         for field_name in field_names:
             if field_name not in data:
                 return False, f"Request data is missing the {field_name} field."
         return True, ""
 
     def _send_json_message(self, message: dict) -> None:
-        """Send one length-prefixed JSON response."""
+        """Send one length-prefixed JSON response to the client.
+
+        :param message: Response dictionary to encode and send.
+        :raises ConnectionError: If the underlying socket send fails.
+        """
         try:
             send_all(self.client_socket, encode_message(message))
         except OSError as exc:
             raise ConnectionError("Failed to send response to the client.") from exc
 
     def _send_raw_bytes(self, payload: bytes) -> None:
-        """Send one raw binary payload to the client."""
+        """Send one raw binary payload to the client.
+
+        :param payload: Raw bytes to send after a successful ``ready``
+            handshake.
+        :raises ConnectionError: If the underlying socket send fails.
+        """
         try:
             send_all(self.client_socket, payload)
         except OSError as exc:

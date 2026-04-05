@@ -30,7 +30,13 @@ class ServerSocket:
         self.listening_socket: socket.socket | None = None
 
     def serve_forever(self) -> None:
-        """Create the listening socket and accept clients forever."""
+        """Create the listening socket and accept clients indefinitely.
+
+        Each accepted client is handed off to a dedicated daemon thread so the
+        main server thread can continue accepting new connections. Closing the
+        listening socket causes the loop to exit cleanly; other socket errors
+        are re-raised.
+        """
         self.listening_socket = self._create_listening_socket()
         self.port = self.listening_socket.getsockname()[1]
         print(f"running on ({self.host}, {self.port})")
@@ -47,8 +53,22 @@ class ServerSocket:
             self._start_client_thread(client_socket, client_address)
 
     def _create_listening_socket(self) -> socket.socket:
-        """Create, bind, and listen on the server socket."""
+        """Create, bind, and start listening on the server socket.
+
+        :returns: Listening TCP socket configured with ``SO_REUSEADDR``.
+        """
+
+        # AF_INET - uses IPv4 addresses
+        # SOCK_STREAM - uses TCP
+
         listening_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+
+
+        # setsockopt() changes a setting on this socket.
+        # SOL_SOCKET is the setting category,
+        # SO_REUSEADDR tells the OS to allow reusing the same address/port quickly after restart,
+        # and 1 means this option is enabled.
+
         listening_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         listening_socket.bind((self.host, self.port))
         listening_socket.listen(self.backlog)
@@ -59,7 +79,11 @@ class ServerSocket:
         client_socket: socket.socket,
         client_address: tuple[str, int],
     ) -> None:
-        """Start a thread to handle the accepted client."""
+        """Start a daemon thread for one accepted client connection.
+
+        :param client_socket: Accepted client socket.
+        :param client_address: Remote client address reported by ``accept``.
+        """
         client_thread = threading.Thread(
             target=self._run_client_handler,
             args=(client_socket, client_address),
@@ -73,7 +97,11 @@ class ServerSocket:
         client_socket: socket.socket,
         client_address: tuple[str, int],
     ) -> None:
-        """Instantiate and run one client handler."""
+        """Instantiate and run the handler for one client connection.
+
+        :param client_socket: Accepted client socket.
+        :param client_address: Remote client address reported by ``accept``.
+        """
         handler = ClientHandler(
             client_socket=client_socket,
             auth_service=self.auth_service,

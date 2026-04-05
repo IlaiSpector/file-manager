@@ -31,7 +31,12 @@ class AuthResult:
         )
 
     def __eq__(self, other: object) -> bool:
-        """Support direct equality checks"""
+        """Compare two authentication results by value.
+
+        :param other: Object being compared with this result.
+        :returns: ``True`` when both objects hold the same success flag,
+            message, and user reference.
+        """
         if not isinstance(other, AuthResult):
             return NotImplemented
         return (
@@ -53,9 +58,18 @@ class AuthService:
         self.storage_root = storage_root
 
     def try_signup(self, username: str, email: str, password: str) -> AuthResult:
-        """Create a new user account when the provided data is valid.
+        """Attempt to create a new user account.
 
-        Expected validation failures are returned as ``AuthResult`` instances.
+        Expected validation or uniqueness failures are returned as
+        :class:`AuthResult` objects with ``success=False``. Unexpected database
+        or filesystem errors are allowed to propagate unless they happen because
+        the username or email is not unique.
+
+        :param username: Requested unique username.
+        :param email: Email used for login and uniqueness checks.
+        :param password: Plain-text password supplied by the client.
+        :returns: Authentication result describing the signup outcome and, on
+            success, the newly created user.
         """
         try:
             normalized_username = require_non_empty_text(username, "username")
@@ -92,7 +106,12 @@ class AuthService:
             return AuthResult(False, "Email or username already exists", None)
 
     def try_login(self, email: str, password: str) -> AuthResult:
-        """Authenticate a user by email and password."""
+        """Authenticate a user by email and password.
+
+        :param email: Email used to locate the account.
+        :param password: Plain-text password supplied by the client.
+        :returns: Authentication result describing whether the login succeeded.
+        """
         try:
             normalized_email = self._normalize_email(email)
             normalized_password = self._require_password(password)
@@ -110,19 +129,33 @@ class AuthService:
             return AuthResult(True, "Login successful", user)
 
     def _generate_user_id(self) -> str:
-        """Create the UUID string used as user id"""
+        """Create the UUID string stored as the user identifier.
+
+        :returns: Newly generated UUID string.
+        """
         return str(uuid.uuid4())
 
     def _normalize_email(self, email: str) -> str:
-        """Normalize email input for uniqueness checks and login lookup."""
+        """Normalize an email for storage and lookup.
+
+        :param email: Raw email value from the caller.
+        :returns: Lowercased, trimmed email string.
+        :raises TypeError: If ``email`` is not a string.
+        :raises ValueError: If the normalized email is empty.
+        """
         normalized_email = require_non_empty_text(email, "email").lower()
         return normalized_email
 
     def _require_password(self, password: str) -> str:
-        """Require a non-empty password string.
+        """Validate that a password was supplied.
 
-        The password is not stripped because spaces may be part
-        of the user's intended password
+        The password itself is returned unchanged so leading or trailing spaces
+        remain valid when they are part of the user's intended password.
+
+        :param password: Candidate plain-text password.
+        :returns: The original password string.
+        :raises TypeError: If ``password`` is not a string.
+        :raises ValueError: If the password is empty or whitespace-only.
         """
         if not isinstance(password, str):
             raise TypeError("password must be a string.")
@@ -131,31 +164,63 @@ class AuthService:
         return password
 
     def _hash_password(self, password: str) -> str:
-        """Return a bcrypt hash string for database storage."""
+        """Hash a plain-text password for database storage.
+
+        :param password: Plain-text password
+        :returns: Bcrypt hash string suitable for persistent storage.
+        """
         password_bytes = password.encode("utf-8")
         return bcrypt.hashpw(password_bytes, bcrypt.gensalt()).decode("utf-8")
 
     def _verify_password(self, password: str, stored_hash: str) -> bool:
-        """Check a password against the stored bcrypt hash."""
+        """Verify a plain-text password against a stored bcrypt hash.
+
+        :param password: Plain-text password supplied by the client.
+        :param stored_hash: Hash read from persistent storage.
+        :returns: ``True`` when the password matches the stored hash.
+        """
         return bcrypt.checkpw(password.encode("utf-8"), stored_hash.encode("utf-8"))
 
     def _get_user_by_email(self, session: Session, email: str) -> User | None:
-        """Look up a user by email address."""
+        """Fetch one user by email address.
+
+        :param session: Active SQLAlchemy session used for the query.
+        :param email: Normalized email to search for.
+        :returns: Matching user object or ``None`` when no account exists.
+        """
         statement = select(User).where(User.email == email)
         return session.scalar(statement)
 
     def _email_exists(self, session: Session, email: str) -> bool:
-        """Return whether a user with a specific email is already registeed."""
+        """Check whether an email address is already registered.
+
+        :param session: Active SQLAlchemy session used for the query.
+        :param email: Normalized email to search for.
+        :returns: ``True`` when a matching user already exists.
+        """
         return self._get_user_by_email(session, email) is not None
 
     def _username_exists(self, session: Session, username: str) -> bool:
-        """Return whether a username is already registered."""
+        """Check whether a username is already registered.
+
+        :param session: Active SQLAlchemy session used for the query.
+        :param username: Username to search for.
+        :returns: ``True`` when a matching user already exists.
+        """
         statement = select(User).where(User.username == username)
         return session.scalar(statement) is not None
 
     def _create_user_storage_folder(self, user_id: str) -> None:
-        """Create the per-user storage folder under the configured storage root.
-        ''parents=True'' create parents folders if missing 
+        """Create the storage directory for one newly created user.
+
+        The root storage directory is created first when needed. The user
+        directory itself is expected not to exist yet; an existing directory is
+        treated as an error because it likely signals inconsistent signup
+        state.
+
+        :param user_id: Identifier of the user whose folder should be created.
+        :raises FileExistsError: If the target user directory already exists.
+        :raises OSError: If the filesystem operation fails.
         """
 
         # exists_ok=True means if the folder exists, don't raise an error and leave it as it is.

@@ -8,7 +8,12 @@ from server.services.file_service import FileService
 
 
 def main() -> None:
-    """Initialize server dependencies and start accepting clients."""
+    """Initialize server dependencies and start the listening loop.
+
+    The function wires together the database manager, authentication service,
+    file service, and listening socket before handing control to the server's
+    forever-running accept loop.
+    """
     db_manager = DatabaseManager()
     db_manager.initialize_database()
 

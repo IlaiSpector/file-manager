@@ -32,7 +32,14 @@ INVALID_FILENAME_CHARACTERS = set('<>:"/\\|?*')
 
 
 def require_non_empty_text(value: str, field_name: str) -> str:
-    """Return a stripped text value or raise when it is empty."""
+    """Validate and normalize a required text field.
+
+    :param value: Candidate text value.
+    :param field_name: Human-readable field name used in error messages.
+    :returns: ``value.strip()`` when the input is a non-empty string.
+    :raises TypeError: If ``value`` is not a string.
+    :raises ValueError: If the normalized value is empty.
+    """
     if not isinstance(value, str):
         raise TypeError(f"{field_name} must be a string.")
 
@@ -43,7 +50,12 @@ def require_non_empty_text(value: str, field_name: str) -> str:
 
 
 def is_valid_email(email: str) -> bool:
-    """Perform a simple email-shape validation."""
+    """Perform the project's simple email-shape validation.
+
+    :param email: Email candidate to validate.
+    :returns: ``True`` when the value contains one ``@`` and a plausible domain
+        section, otherwise ``False``.
+    """
     if not isinstance(email, str):
         return False
 
@@ -65,7 +77,15 @@ def is_valid_email(email: str) -> bool:
 
 
 def validate_windows_filename(filename: str) -> str:
-    """Return a safe filename or raise when it violates Windows filename rules. throws TypeError/ValueError"""
+    """Validate a filename against the project's Windows-safe rules.
+
+    :param filename: Candidate filename without directory components.
+    :returns: The original filename when it is accepted.
+    :raises TypeError: If ``filename`` is not a string.
+    :raises ValueError: If the filename is empty, ends with a space or dot,
+        contains forbidden characters or path-like values, or uses a reserved
+        Windows device name.
+    """
     if not isinstance(filename, str):
         raise TypeError("filename must be a string.")
     if not filename:

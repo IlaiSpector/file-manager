@@ -6,13 +6,29 @@ from server.utils.validators import require_non_empty_text
 
 
 def get_user_storage_path(storage_root: Path, user_id: str) -> Path:
-    """Return the storage path for a specific user id."""
+    """Build the storage directory path for one user.
+
+    :param storage_root: Root storage directory configured for the server.
+    :param user_id: Authenticated user identifier.
+    :returns: Path to the user's storage directory.
+    :raises TypeError: If ``user_id`` is not a string.
+    :raises ValueError: If ``user_id`` is empty after normalization.
+    """
     normalized_user_id = require_non_empty_text(user_id, "user_id")
     return Path(storage_root) / f"user_{normalized_user_id}"
 
 
 def build_user_file_path(storage_root: Path, user_id: str, filename: str) -> Path:
-    """Return a safe path inside the user's storage folder for one filename."""
+    """Build a safe file path inside one user's storage directory.
+
+    :param storage_root: Root storage directory configured for the server.
+    :param user_id: Authenticated user identifier.
+    :param filename: Filename that should stay inside the user's folder.
+    :returns: Normalized file path inside the user's storage directory.
+    :raises TypeError: If ``filename`` is not a string.
+    :raises ValueError: If the filename is empty, contains path separators, or
+        resolves outside the user's storage directory.
+    """
     if not isinstance(filename, str):
         raise TypeError("filename must be a string.")
     if not filename:

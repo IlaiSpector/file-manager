@@ -18,6 +18,7 @@ dist/
 
 # Local database and storage
 data/app.db
+*.db
 storage/
 
 # OS files

@@ -22,14 +22,24 @@ from shared.config import (
 
 
 def _validate_message_dict(message: dict[str, Any]) -> dict[str, Any]:
-    """Ensure a message is a dictionary to make sure it can be transformed into a JSON-object before encoding."""
+    """Validate a message object before JSON encoding.
+
+    :param message: Candidate message object.
+    :returns: The original message when it is a dictionary.
+    :raises TypeError: If ``message`` is not a dictionary.
+    """
     if not isinstance(message, dict):
         raise TypeError("message must be a dictionary.")
     return message
 
 
 def _validate_bytes(data: bytes) -> bytes:
-    """Ensure a socket payload is raw bytes."""
+    """Validate that a socket payload is raw bytes.
+
+    :param data: Payload that will be sent or decoded.
+    :returns: The original payload when it is bytes.
+    :raises TypeError: If ``data`` is not bytes.
+    """
     if isinstance(data, bytes):
         return data
 
@@ -37,7 +47,12 @@ def _validate_bytes(data: bytes) -> bytes:
 
 
 def encode_message(message: dict[str, Any]) -> bytes:
-    """Encode a message into ``length-prefix + JSON payload`` both as bytes."""
+    """Encode one protocol message to ``length-prefix + JSON payload`` bytes.
+
+    :param message: Protocol message dictionary.
+    :returns: Length-prefixed JSON bytes ready to send over the socket.
+    :raises TypeError: If ``message`` is not a dictionary.
+    """
     json_bytes = json.dumps(
         _validate_message_dict(message),
         ensure_ascii=False,
@@ -51,11 +66,17 @@ def encode_message(message: dict[str, Any]) -> bytes:
 
 
 def decode_message(prefixed_bytes: bytes) -> dict[str, Any]:
-    """Decode a full prefixed JSON byte sequence back into a dictionary.
+    """Decode one complete framed JSON message.
 
-    The caller must provide one complete framed message, length prefix included
-    
-    ValueErrors needs to catched to prevent them crashing server
+    The caller must provide the full message, including the 4-byte length
+    prefix.
+
+    :param prefixed_bytes: Complete framed message as received from the wire.
+    :returns: Parsed JSON object as a dictionary.
+    :raises TypeError: If ``prefixed_bytes`` is not bytes.
+    :raises ValueError: If the frame is too short, the prefix does not match
+        the payload length, or the decoded JSON value is not an object.
+    :raises json.JSONDecodeError: If the payload is not valid JSON text.
     """
     message_bytes = _validate_bytes(prefixed_bytes)
     if len(message_bytes) < LENGTH_PREFIX_SIZE:
@@ -77,12 +98,27 @@ def decode_message(prefixed_bytes: bytes) -> dict[str, Any]:
 
 
 def send_all(sock: socket.socket, data: bytes) -> None:
-    """Send all bytes through a socket."""
+    """Send a complete bytes payload through a socket.
+
+    :param sock: Connected socket used for the send.
+    :param data: Raw bytes to transmit.
+    :raises TypeError: If ``data`` is not bytes.
+    :raises OSError: If the underlying socket send fails.
+    """
     sock.sendall(_validate_bytes(data))
 
 
 def recv_exact(sock: socket.socket, size: int) -> bytes:
-    """Receive exactly ``size`` bytes or raise if the socket closes early."""
+    """Receive exactly ``size`` bytes from a socket.
+
+    :param sock: Connected socket used for the receive.
+    :param size: Number of bytes the caller expects.
+    :returns: Exactly ``size`` bytes, or ``b""`` when ``size`` is zero.
+    :raises TypeError: If ``size`` is not an integer.
+    :raises ValueError: If ``size`` is negative.
+    :raises ConnectionError: If the socket closes before all expected bytes are
+        received.
+    """
     if not isinstance(size, int):
         raise TypeError("size must be an integer.")
     if size < 0:
@@ -108,7 +144,13 @@ def recv_exact(sock: socket.socket, size: int) -> bytes:
 
 
 def recv_message_bytes(sock: socket.socket) -> bytes:
-    """Receive one complete length-prefixed JSON message from a socket."""
+    """Receive one complete length-prefixed JSON message.
+
+    :param sock: Connected socket used for the receive.
+    :returns: Full framed message, including the length prefix.
+    :raises ConnectionError: If the socket closes during the prefix or payload
+        receive.
+    """
     length_prefix = recv_exact(sock, LENGTH_PREFIX_SIZE)
     payload_length = int.from_bytes(length_prefix, LENGTH_PREFIX_BYTEORDER)
     payload_bytes = recv_exact(sock, payload_length)
@@ -118,9 +160,16 @@ def recv_message_bytes(sock: socket.socket) -> bytes:
 def recv_message_bytes_or_none(sock: socket.socket) -> bytes | None:
     """Receive one complete JSON message or ``None`` on a clean EOF.
 
-    ``None`` is returned only when the peer closes the socket before sending the
-    next message length prefix at all. Partial prefixes or payloads still raise
-    ``ConnectionError`` because they indicate a broken transfer.
+    ``None`` is returned only when the peer closes the socket before starting
+    the next message length prefix. Partial prefixes or payloads still raise
+    :class:`ConnectionError` because they represent a truncated transfer rather
+    than a clean disconnect.
+
+    :param sock: Connected socket used for the receive.
+    :returns: Full framed message, including the length prefix, or ``None`` on
+        a clean idle disconnect.
+    :raises ConnectionError: If the socket closes after a message has started
+        but before it finishes.
     """
     prefix_chunks: list[bytes] = []
     bytes_remaining = LENGTH_PREFIX_SIZE
