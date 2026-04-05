@@ -122,10 +122,6 @@ def recv_message_bytes_or_none(sock: socket.socket) -> bytes | None:
     next message length prefix at all. Partial prefixes or payloads still raise
     ``ConnectionError`` because they indicate a broken transfer.
     """
-    #TODO, change the way rec_message_bytes_or_none behave. currently it depends on recv_exact, which can raise an error, and currently it still raises ConnectionError if client drops mid transfer. 
-    # there should be a recv_exactly_or_none function which behaves like recv_exactly but doesn't throw, returns None if client disconnect. 
-    # this function should do first, length_prefix = recv_exactly_or_none(LENGTH_PREFIX_SIZE). than cbeck if its None, if it is return None, otherwise return recv_exactly_or_none(Lengh)
-    #  (which will be available after decoding of length_prefix). if gets None back, return None, otherwise, return the result bytes
     prefix_chunks: list[bytes] = []
     bytes_remaining = LENGTH_PREFIX_SIZE
 

@@ -1,6 +1,5 @@
 """Per-client request handling for the server."""
 
-from __future__ import annotations
 
 import json
 import socket
@@ -67,7 +66,7 @@ class ClientHandler:
 
     def handle_client(self) -> None:
         """Process requests until the peer disconnects or a network error occurs."""
-        #TODO, in case of any other exception, don't crash the server but print it so the problem will properly surface. do drop the client. 
+
         try:
             while True:
                 message_bytes = recv_message_bytes_or_none(self.client_socket)
@@ -93,6 +92,7 @@ class ClientHandler:
         except OSError:
             pass
         finally:
+            print(f"closed client {self.client_address}")
             self.client_socket.close()
 
     def _dispatch_message(self, message: dict) -> None:
@@ -326,7 +326,7 @@ class ClientHandler:
 
     def _validate_download_file(self, data: dict) -> tuple[bool, str]:
         """Validate a download request."""
-        return self._validate_filename_only_action(data)
+        return self._require_fields(data, "filename")
 
     def handle_delete_file(self, request_id: str, data: dict) -> None:
         """Delete one stored file owned by the current user."""
@@ -350,7 +350,7 @@ class ClientHandler:
 
     def _validate_delete_file(self, data: dict) -> tuple[bool, str]:
         """Validate a delete request."""
-        return self._validate_filename_only_action(data)
+        return self._require_fields(data, "filename")
 
     def handle_logout(self, request_id: str, data: dict) -> None:
         """Clear the authenticated user while keeping the socket open."""
@@ -358,17 +358,6 @@ class ClientHandler:
         self._send_json_message(
             build_success_response(ACTION_LOGOUT, request_id, "Logged out successfully"),
         )
-
-    def _validate_filename_only_action(self, data: dict) -> tuple[bool, str]: #TODO, I might want to remove this function, maybe I don't need to validate the filename, as it is not saved in the system. (only used for deletion and downloading)
-        """Validate actions whose payload only contains a filename."""
-        is_valid, error_message = self._require_fields(data, "filename")
-        if not is_valid:
-            return False, error_message
-        try:
-            validate_windows_filename(data["filename"])
-        except (TypeError, ValueError) as exc:
-            return False, str(exc)
-        return True, ""
 
     def _require_fields(self, data: dict, *field_names: str) -> tuple[bool, str]:
         """Ensure the action payload contains all required keys."""

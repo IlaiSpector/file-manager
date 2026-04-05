@@ -1,6 +1,5 @@
 """Listening socket setup and client-thread creation for the server."""
 
-from __future__ import annotations
 
 import socket
 import threading
@@ -34,10 +33,11 @@ class ServerSocket:
         """Create the listening socket and accept clients forever."""
         self.listening_socket = self._create_listening_socket()
         self.port = self.listening_socket.getsockname()[1]
-
+        print(f"running on ({self.host}, {self.port})")
         while True:
             try:
                 client_socket, client_address = self.listening_socket.accept()
+                print(f"recieved client {client_address}")
             except OSError:
                 # checks if the listening socket has been closed. if it, exits cleanly. if it not raises the error.
                 if self.listening_socket.fileno() == -1:
