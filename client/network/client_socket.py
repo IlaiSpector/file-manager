@@ -9,7 +9,6 @@ import uuid
 from typing import Any
 
 from client.config import (
-    CONNECT_TIMEOUT_SECONDS,
     SERVER_HOST,
     SERVER_PORT,
     SOCKET_TIMEOUT_SECONDS,
@@ -62,7 +61,6 @@ class ClientSocket:
         self,
         host: str = SERVER_HOST,
         port: int = SERVER_PORT,
-        connect_timeout: float | None = CONNECT_TIMEOUT_SECONDS,
         socket_timeout: float | None = SOCKET_TIMEOUT_SECONDS,
         downloads_path: Path | str | None = None,
     ) -> None:
@@ -70,13 +68,11 @@ class ClientSocket:
 
         :param host: Server host or IP address.
         :param port: Server TCP port.
-        :param connect_timeout: Timeout used while opening the TCP connection.
         :param socket_timeout: Timeout used after the connection is open.
         :param downloads_path: Optional downloads directory override.
         """
         self.host = host
         self.port = port
-        self.connect_timeout = connect_timeout
         self.socket_timeout = socket_timeout
         self.downloads_path = (
             Path(downloads_path)
@@ -95,10 +91,7 @@ class ClientSocket:
             raise ConnectionError("Client is already connected.")
 
         try:
-            client_socket = socket.create_connection(
-                (self.host, self.port),
-                timeout=self.connect_timeout,
-            )
+            client_socket = socket.create_connection((self.host, self.port))
             client_socket.settimeout(self.socket_timeout)
         except OSError as exc:
             raise ConnectionError("Failed to connect to the server.") from exc
@@ -110,13 +103,8 @@ class ClientSocket:
         if self._socket is None:
             return
 
-        try:
-            self._socket.shutdown(socket.SHUT_RDWR)
-        except OSError:
-            pass
-        finally:
-            self._socket.close()
-            self._socket = None
+        self._socket.close()
+        self._socket = None
 
     def is_connected(self) -> bool:
         """Return whether this wrapper currently owns an open socket.
@@ -134,9 +122,8 @@ class ClientSocket:
         :raises ConnectionError: If the client is disconnected or sending
             fails.
         """
-        client_socket = self._require_socket()
         try:
-            send_all(client_socket, encode_message(message))
+            send_all(self._socket, encode_message(message))
         except OSError as exc:
             raise ConnectionError("Failed to send message to the server.") from exc
 
@@ -149,9 +136,8 @@ class ClientSocket:
         :raises ValueError: If the received payload is not a valid protocol
             JSON object.
         """
-        client_socket = self._require_socket()
         try:
-            return decode_message(recv_message_bytes(client_socket))
+            return decode_message(recv_message_bytes(self._socket))
         except ConnectionError:
             raise
         except OSError as exc:
@@ -166,9 +152,8 @@ class ClientSocket:
         :raises ConnectionError: If the client is disconnected or sending
             fails.
         """
-        client_socket = self._require_socket()
         try:
-            send_all(client_socket, payload)
+            send_all(self._socket, payload)
         except OSError as exc:
             raise ConnectionError("Failed to send file bytes to the server.") from exc
 
@@ -180,9 +165,8 @@ class ClientSocket:
         :raises ConnectionError: If the client is disconnected or the raw
             transfer is interrupted.
         """
-        client_socket = self._require_socket()
         try:
-            return recv_exact(client_socket, size)
+            return recv_exact(self._socket, size)
         except ConnectionError:
             raise
         except OSError as exc:
@@ -232,7 +216,6 @@ class ClientSocket:
         response = self._receive_expected_response(
             ACTION_LIST_FILES,
             request_id,
-            {STATUS_SUCCESS, STATUS_ERROR},
         )
         result = self._result_from_response(response)
         if not result.success:
@@ -265,7 +248,6 @@ class ClientSocket:
         ready_response = self._receive_expected_response(
             ACTION_UPLOAD_FILE,
             request_id,
-            {STATUS_READY, STATUS_ERROR},
         )
         ready_result = self._result_from_response(ready_response)
         if not ready_result.success:
@@ -275,7 +257,6 @@ class ClientSocket:
         complete_response = self._receive_expected_response(
             ACTION_UPLOAD_COMPLETE,
             request_id,
-            {STATUS_SUCCESS, STATUS_ERROR},
         )
         return self._result_from_response(complete_response)
 
@@ -298,19 +279,14 @@ class ClientSocket:
         ready_response = self._receive_expected_response(
             ACTION_DOWNLOAD_FILE,
             request_id,
-            {STATUS_READY, STATUS_ERROR},
         )
         ready_result = self._result_from_response(ready_response)
         if not ready_result.success:
             return ready_result
 
         response_data = ready_response[FIELD_DATA]
-        response_filename = response_data.get("filename")
-        filesize = response_data.get("filesize")
-        if not isinstance(response_filename, str) or not response_filename:
-            raise ValueError("DOWNLOAD_FILE response is missing the filename.")
-        if isinstance(filesize, bool) or not isinstance(filesize, int) or filesize < 0:
-            raise ValueError("DOWNLOAD_FILE response has an invalid filesize.")
+        response_filename = response_data["filename"]
+        filesize = response_data["filesize"]
 
         target_path = self._choose_available_download_path(response_filename)
         file_bytes = self.receive_raw_bytes(filesize)
@@ -342,7 +318,6 @@ class ClientSocket:
         response = self._receive_expected_response(
             action,
             request_id,
-            {STATUS_SUCCESS, STATUS_ERROR},
         )
         return self._result_from_response(response)
 
@@ -361,55 +336,21 @@ class ClientSocket:
         self,
         expected_action: str,
         request_id: str,
-        allowed_statuses: set[str],
     ) -> dict[str, Any]:
         """Receive and validate one response envelope.
 
         :param expected_action: Action expected in the response.
         :param request_id: Request identifier expected in the response.
-        :param allowed_statuses: Status values accepted for this protocol step.
         :returns: Validated response dictionary.
-        :raises ValueError: If the response shape or identity is invalid.
+        :raises ValueError: If the response identity is invalid.
         """
         response = self.receive_json_message()
-        self._validate_response_envelope(response)
 
         if response[FIELD_ACTION] != expected_action:
             raise ValueError("Response action does not match the request.")
         if response[FIELD_REQUEST_ID] != request_id:
             raise ValueError("Response request_id does not match the request.")
-        if response[FIELD_STATUS] not in allowed_statuses:
-            raise ValueError("Response status is not valid for this request.")
         return response
-
-    def _validate_response_envelope(self, response: dict[str, Any]) -> None:
-        """Validate the top-level fields shared by all server responses.
-
-        :param response: Decoded server response dictionary.
-        :raises ValueError: If a required field is missing or has the wrong
-            basic type.
-        """
-        required_fields = (
-            FIELD_ACTION,
-            FIELD_REQUEST_ID,
-            FIELD_STATUS,
-            FIELD_MESSAGE,
-            FIELD_DATA,
-        )
-        for field_name in required_fields:
-            if field_name not in response:
-                raise ValueError(f"Response is missing the {field_name} field.")
-
-        if not isinstance(response[FIELD_ACTION], str) or not response[FIELD_ACTION]:
-            raise ValueError("Response action must be a non-empty string.")
-        if not isinstance(response[FIELD_REQUEST_ID], str) or not response[FIELD_REQUEST_ID]:
-            raise ValueError("Response request_id must be a non-empty string.")
-        if not isinstance(response[FIELD_STATUS], str) or not response[FIELD_STATUS]:
-            raise ValueError("Response status must be a non-empty string.")
-        if not isinstance(response[FIELD_MESSAGE], str):
-            raise ValueError("Response message must be a string.")
-        if not isinstance(response[FIELD_DATA], dict):
-            raise ValueError("Response data must be a dictionary.")
 
     def _result_from_response(self, response: dict[str, Any]) -> Result:
         """Convert a server response into the generic client result.
@@ -421,16 +362,6 @@ class ClientSocket:
             response[FIELD_STATUS] in {STATUS_SUCCESS, STATUS_READY},
             response[FIELD_MESSAGE],
         )
-
-    def _require_socket(self) -> socket.socket:
-        """Return the current socket or fail if the client is disconnected.
-
-        :returns: Connected socket object.
-        :raises ConnectionError: If no socket is currently connected.
-        """
-        if self._socket is None or self._socket.fileno() == -1:
-            raise ConnectionError("Client is not connected to the server.")
-        return self._socket
 
     def _require_upload_source(self, source_path: Path) -> None:
         """Validate the local file selected for upload.
@@ -460,11 +391,7 @@ class ClientSocket:
 
         :param filename: Filename returned by the server.
         :returns: First available local destination path.
-        :raises ValueError: If the filename would not stay inside Downloads.
         """
-        if "/" in filename or "\\" in filename:
-            raise ValueError("Download filename must not contain path separators.")
-
         requested_path = self.downloads_path / filename
         if not requested_path.exists():
             return requested_path
