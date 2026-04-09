@@ -20,6 +20,10 @@ QWidget {
     font-size: 14px;
 }
 
+QLabel {
+    background-color: transparent;
+}
+
 QFrame#card {
     background-color: #ffffff;
     border: 1px solid #dbe3ef;
