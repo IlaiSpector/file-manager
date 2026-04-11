@@ -1,10 +1,9 @@
 """Blocking client networking for the file manager application."""
 
-from __future__ import annotations
-
 from dataclasses import dataclass
 from pathlib import Path
 import socket
+import ssl
 import uuid
 from typing import Any
 
@@ -12,6 +11,8 @@ from client.config import (
     SERVER_HOST,
     SERVER_PORT,
     SOCKET_TIMEOUT_SECONDS,
+    TLS_CERT_PATH,
+    TLS_MINIMUM_VERSION,
     get_default_downloads_path,
 )
 from shared.constants import (
@@ -63,6 +64,7 @@ class ClientSocket:
         port: int = SERVER_PORT,
         socket_timeout: float | None = SOCKET_TIMEOUT_SECONDS,
         downloads_path: Path | str | None = None,
+        tls_cert_path: Path | str = TLS_CERT_PATH,
     ) -> None:
         """Initialize a disconnected client socket wrapper.
 
@@ -79,6 +81,7 @@ class ClientSocket:
             if downloads_path is not None
             else get_default_downloads_path()
         )
+        self.tls_cert_path = Path(tls_cert_path)
         self._socket: socket.socket | None = None
 
     def connect(self) -> None:
@@ -90,10 +93,35 @@ class ClientSocket:
         if self.is_connected():
             raise ConnectionError("Client is already connected.")
 
+        raw_socket: socket.socket | None = None
         try:
-            client_socket = socket.create_connection((self.host, self.port))
+            raw_socket = socket.create_connection(
+                (self.host, self.port),
+                timeout=self.socket_timeout,
+            )
+            raw_socket.settimeout(self.socket_timeout)
+            client_socket = self._create_tls_context().wrap_socket(
+                raw_socket,
+                server_hostname=self.host,
+            )
             client_socket.settimeout(self.socket_timeout)
+        except FileNotFoundError as exc:
+            if raw_socket is not None:
+                raw_socket.close()
+            raise ConnectionError(
+                f"TLS certificate file not found: {self.tls_cert_path}"
+            ) from exc
+        except ssl.SSLCertVerificationError as exc:
+            if raw_socket is not None:
+                raw_socket.close()
+            raise ConnectionError("Failed to verify the server certificate.") from exc
+        except ssl.SSLError as exc:
+            if raw_socket is not None:
+                raw_socket.close()
+            raise ConnectionError("Failed to establish a TLS connection to the server.") from exc
         except OSError as exc:
+            if raw_socket is not None:
+                raw_socket.close()
             raise ConnectionError("Failed to connect to the server.") from exc
 
         self._socket = client_socket
@@ -412,3 +440,12 @@ class ClientSocket:
         :returns: Hexadecimal UUID string used as ``request_id``.
         """
         return uuid.uuid4().hex
+
+    def _create_tls_context(self) -> ssl.SSLContext:
+        """Create the fixed client TLS context used for every connection."""
+        tls_context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+        tls_context.minimum_version = TLS_MINIMUM_VERSION
+        tls_context.check_hostname = False
+        tls_context.verify_mode = ssl.CERT_REQUIRED
+        tls_context.load_verify_locations(cafile=str(self.tls_cert_path))
+        return tls_context

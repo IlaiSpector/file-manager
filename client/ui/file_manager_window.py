@@ -1,7 +1,5 @@
 """Main file manager window for the PyQt6 client application."""
 
-from __future__ import annotations
-
 from pathlib import Path
 from typing import Callable
 

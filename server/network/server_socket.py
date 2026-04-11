@@ -1,10 +1,19 @@
 """Listening socket setup and client-thread creation for the server."""
 
 
+from pathlib import Path
 import socket
+import ssl
 import threading
 
-from server.config import SERVER_BACKLOG, SERVER_HOST, SERVER_PORT
+from server.config import (
+    SERVER_BACKLOG,
+    SERVER_HOST,
+    SERVER_PORT,
+    TLS_CERT_PATH,
+    TLS_KEY_PATH,
+    TLS_MINIMUM_VERSION,
+)
 from server.network.client_handler import ClientHandler
 from server.services.auth_service import AuthService
 from server.services.file_service import FileService
@@ -20,6 +29,8 @@ class ServerSocket:
         host: str = SERVER_HOST,
         port: int = SERVER_PORT,
         backlog: int = SERVER_BACKLOG,
+        tls_cert_path: Path | str = TLS_CERT_PATH,
+        tls_key_path: Path | str = TLS_KEY_PATH,
     ) -> None:
         self.auth_service = auth_service
         self.file_service = file_service
@@ -27,7 +38,10 @@ class ServerSocket:
         self.port = port
         # amount of clients that can wait in queue before accepting.
         self.backlog = backlog
+        self.tls_cert_path = Path(tls_cert_path)
+        self.tls_key_path = Path(tls_key_path)
         self.listening_socket: socket.socket | None = None
+        self._tls_context: ssl.SSLContext | None = None
 
     def serve_forever(self) -> None:
         """Create the listening socket and accept clients indefinitely.
@@ -37,6 +51,7 @@ class ServerSocket:
         listening socket causes the loop to exit cleanly; other socket errors
         are re-raised.
         """
+        self._tls_context = self._create_tls_context()
         self.listening_socket = self._create_listening_socket()
         self.port = self.listening_socket.getsockname()[1]
         print(f"running on ({self.host}, {self.port})")
@@ -74,6 +89,16 @@ class ServerSocket:
         listening_socket.listen(self.backlog)
         return listening_socket
 
+    def _create_tls_context(self) -> ssl.SSLContext:
+        """Create the fixed server TLS context used for incoming clients."""
+        tls_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        tls_context.minimum_version = TLS_MINIMUM_VERSION
+        tls_context.load_cert_chain(
+            certfile=str(self.tls_cert_path),
+            keyfile=str(self.tls_key_path),
+        )
+        return tls_context
+
     def _start_client_thread(
         self,
         client_socket: socket.socket,
@@ -102,8 +127,19 @@ class ServerSocket:
         :param client_socket: Accepted client socket.
         :param client_address: Remote client address reported by ``accept``.
         """
+        assert self._tls_context is not None
+        try:
+            tls_client_socket = self._tls_context.wrap_socket(
+                client_socket,
+                server_side=True,
+            )
+        except ssl.SSLError as exc:
+            print(f"failed tls handshake with {client_address}: {exc}")
+            client_socket.close()
+            return
+
         handler = ClientHandler(
-            client_socket=client_socket,
+            client_socket=tls_client_socket,
             auth_service=self.auth_service,
             file_service=self.file_service,
             client_address=client_address,

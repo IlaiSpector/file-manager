@@ -1,7 +1,5 @@
 """Client GUI entrypoint for the file manager application."""
 
-from __future__ import annotations
-
 import sys
 
 from PyQt6.QtWidgets import QApplication, QMessageBox, QWidget

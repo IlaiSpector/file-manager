@@ -1,7 +1,5 @@
 """Login window for the PyQt6 client application."""
 
-from __future__ import annotations
-
 from typing import Callable
 
 from PyQt6.QtCore import Qt
