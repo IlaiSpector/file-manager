@@ -87,6 +87,9 @@ class ClientHandler:
                 self._dispatch_message(message)
         except ConnectionError:
             return
+        except TimeoutError:
+            print(f"timed out client {self.client_address}")
+            return
         finally:
             self.close()
 

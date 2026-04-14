@@ -7,6 +7,7 @@ import ssl
 import threading
 
 from server.config import (
+    CLIENT_SOCKET_TIMEOUT_SECONDS,
     SERVER_BACKLOG,
     SERVER_HOST,
     SERVER_PORT,
@@ -29,6 +30,7 @@ class ServerSocket:
         host: str = SERVER_HOST,
         port: int = SERVER_PORT,
         backlog: int = SERVER_BACKLOG,
+        client_socket_timeout: float | None = CLIENT_SOCKET_TIMEOUT_SECONDS,
         tls_cert_path: Path | str = TLS_CERT_PATH,
         tls_key_path: Path | str = TLS_KEY_PATH,
     ) -> None:
@@ -38,6 +40,7 @@ class ServerSocket:
         self.port = port
         # amount of clients that can wait in queue before accepting.
         self.backlog = backlog
+        self.client_socket_timeout = client_socket_timeout
         self.tls_cert_path = Path(tls_cert_path)
         self.tls_key_path = Path(tls_key_path)
         self.listening_socket: socket.socket | None = None
@@ -128,12 +131,18 @@ class ServerSocket:
         :param client_address: Remote client address reported by ``accept``.
         """
         assert self._tls_context is not None
+        if self.client_socket_timeout is not None:
+            client_socket.settimeout(self.client_socket_timeout)
+
         try:
             tls_client_socket = self._tls_context.wrap_socket(
                 client_socket,
                 server_side=True,
             )
-        except ssl.SSLError as exc:
+            # makes sure that tls_client_socket has timeout as well
+            if self.client_socket_timeout is not None:
+                tls_client_socket.settimeout(self.client_socket_timeout)
+        except (ssl.SSLError, OSError) as exc:
             print(f"failed tls handshake with {client_address}: {exc}")
             client_socket.close()
             return

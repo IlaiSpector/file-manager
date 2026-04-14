@@ -21,7 +21,7 @@ data/app.db
 *.db
 storage/
 certs/*.key
-
+certs/*.crt
 # OS files
 .DS_Store
 Thumbs.db
