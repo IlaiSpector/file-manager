@@ -7,7 +7,6 @@ SERVER_HOST = "127.0.0.1"
 SERVER_PORT = 41021
 
 SOCKET_TIMEOUT_SECONDS = 30.0
-TLS_CERT_PATH = Path(__file__).resolve().parent.parent / "certs" / "server.crt"
 TLS_MINIMUM_VERSION = ssl.TLSVersion.TLSv1_2
 
 

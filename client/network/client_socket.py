@@ -11,7 +11,6 @@ from client.config import (
     SERVER_HOST,
     SERVER_PORT,
     SOCKET_TIMEOUT_SECONDS,
-    TLS_CERT_PATH,
     TLS_MINIMUM_VERSION,
     get_default_downloads_path,
 )
@@ -64,7 +63,6 @@ class ClientSocket:
         port: int = SERVER_PORT,
         socket_timeout: float | None = SOCKET_TIMEOUT_SECONDS,
         downloads_path: Path | str | None = None,
-        tls_cert_path: Path | str = TLS_CERT_PATH,
     ) -> None:
         """Initialize a disconnected client socket wrapper.
 
@@ -81,7 +79,6 @@ class ClientSocket:
             if downloads_path is not None
             else get_default_downloads_path()
         )
-        self.tls_cert_path = Path(tls_cert_path)
         self._socket: socket.socket | None = None
 
     def connect(self) -> None:
@@ -105,16 +102,6 @@ class ClientSocket:
                 server_hostname=self.host,
             )
             client_socket.settimeout(self.socket_timeout)
-        except FileNotFoundError as exc:
-            if raw_socket is not None:
-                raw_socket.close()
-            raise ConnectionError(
-                f"TLS certificate file not found: {self.tls_cert_path}"
-            ) from exc
-        except ssl.SSLCertVerificationError as exc:
-            if raw_socket is not None:
-                raw_socket.close()
-            raise ConnectionError("Failed to verify the server certificate.") from exc
         except ssl.SSLError as exc:
             if raw_socket is not None:
                 raw_socket.close()
@@ -446,6 +433,5 @@ class ClientSocket:
         tls_context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
         tls_context.minimum_version = TLS_MINIMUM_VERSION
         tls_context.check_hostname = False
-        tls_context.verify_mode = ssl.CERT_REQUIRED
-        tls_context.load_verify_locations(cafile=str(self.tls_cert_path))
+        tls_context.verify_mode = ssl.CERT_NONE
         return tls_context
